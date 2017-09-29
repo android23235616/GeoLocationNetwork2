@@ -13,6 +13,7 @@ import android.location.Location;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.provider.SyncStateContract;
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
@@ -26,6 +27,7 @@ import com.elabs.geolocationnetwork.utils.Constants;
 import com.elabs.geolocationnetwork.utils.LocationManager;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.stats.WakeLockEvent;
 import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
@@ -46,6 +48,8 @@ public class LocationDetectingService extends Service implements GoogleApiClient
     Handler h;
     int i;
     GoogleApiClient googleApiClient;
+    PowerManager.WakeLock wakeLock;
+    PowerManager powerManager;
     LocationRequest locationServices;
     DatabaseReference firebase;
     Location lastLocation = null;
@@ -56,20 +60,39 @@ public class LocationDetectingService extends Service implements GoogleApiClient
     }
 
     @Override
+    public void onCreate(){
+        super.onCreate();
+    }
+
+    @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         //return super.onStartCommand(intent, flags, startId);
         h = new Handler();
         createApiClient();
-        if (intent.getAction().equals(Constants.FOREGROUND_SERVICE_KEY)) {
-            startForegroundService(Constants.NOTIFICATION_ID_START_GEOLOCATION, getCompatNotification(Constants.NOTIFICATION_ID_START_GEOLOCATION));
-        } else if (intent.getAction().equals(Constants.STOP_FOREGROUND_SERVICE_KEY)) {
-            stopSelf();
-        }
+       if(intent!=null){
+           if (intent.getAction().equals(Constants.FOREGROUND_SERVICE_KEY)) {
+               Display("called");
+               startForeground(Constants.NOTIFICATION_ID_START_GEOLOCATION, getCompatNotification(Constants.NOTIFICATION_ID_START_GEOLOCATION));
+               startForegroundService(Constants.NOTIFICATION_ID_START_GEOLOCATION, getCompatNotification(Constants.NOTIFICATION_ID_START_GEOLOCATION));
+           } else if (intent.getAction().equals(Constants.STOP_FOREGROUND_SERVICE_KEY)) {
+               stopSelf();
+               googleApiClient.disconnect();
+               if(powerManager!=null){
+                   if(wakeLock.isHeld()){
+                       wakeLock.release();
+                   }
+               }
+               stopForeground(true);
 
-        Display("called");
+           }
+       }
+
+
 
         return START_STICKY;
     }
+
+
 
     private void createApiClient() {
         if (googleApiClient == null)
@@ -80,14 +103,17 @@ public class LocationDetectingService extends Service implements GoogleApiClient
 
     private void startForegroundService(int notificationIdStartGeolocation, Notification compatNotification) {
         compatNotification.flags = Notification.FLAG_NO_CLEAR;
-        NotificationManager notificationManagere = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        notificationManagere.notify(notificationIdStartGeolocation, compatNotification);
+        //NotificationManager notificationManagere = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        //notificationManagere.notify(notificationIdStartGeolocation, compatNotification);
         i = 1;
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
                 while (true) {
-                    Log.i("23235616", "I ran @ " + i);
+                    if(lastLocation!=null)
+                        Log.i("23235616", "I ran @ " + i +" @ location "+lastLocation.getLatitude()+","+lastLocation.getLongitude());
+                    else
+                        Log.i("23235616", "I ran @ " + i );
                     i++;
                     try {
                         Thread.sleep(1000);
@@ -129,7 +155,9 @@ public class LocationDetectingService extends Service implements GoogleApiClient
         PendingIntent pendingIntent = PendingIntent.getActivity(this, notificationId, startIntent,PendingIntent.FLAG_ONE_SHOT);
         builder.setContentIntent(pendingIntent);
         builder.setOngoing(true).addAction(android.R.drawable.star_big_off,"stop",pendingIntent);
-        return builder.build();
+        Notification n =  builder.build();
+        n.flags = Notification.FLAG_NO_CLEAR|Notification.FLAG_FOREGROUND_SERVICE;
+        return n;
 
     }
 
@@ -161,6 +189,10 @@ public class LocationDetectingService extends Service implements GoogleApiClient
 
     private void Initialise(){
         firebase = FirebaseDatabase.getInstance().getReference();
+        powerManager = (PowerManager)getSystemService(POWER_SERVICE);
+        wakeLock = powerManager.newWakeLock(PowerManager.FULL_WAKE_LOCK,"My Wake Lock");
+        if(!wakeLock.isHeld())
+            wakeLock.acquire();
     }
 @Override
     public void onConnectionFailed(ConnectionResult connectionResult) {
